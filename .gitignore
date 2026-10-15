@@ -1,0 +1,34 @@
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+**/!.env.example
+*.pem
+*.key
+
+# Node.js / Next.js
+node_modules/
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Hardhat generated files
+artifacts/
+cache/
+typechain-types/
+
+# Local logs and editor files
+*.log
+.DS_Store
+.vscode/
+# Local Hardhat deployment records
+blockchain/ignition/deployments/
+
+# Temporary backups
+*.backup
+*.save
+*.bak
