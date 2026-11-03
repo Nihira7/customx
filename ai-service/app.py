@@ -1,5 +1,4 @@
 
-from fastapi.middleware.cors import CORSMiddleware
 import os
 import json
 import uuid 
@@ -8,8 +7,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from groq import Groq
-import subprocess
-from pydantic import BaseModel, Field
+
+from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException
 
 from pypdf import PdfReader
@@ -88,7 +87,245 @@ def classify_invoice(invoice_text):
     result = response.choices[0].message.content
     return json.loads(result)
 
+#Attacker agent
+def generate_adversarial_invoices():
 
+    candidates = get_tariff_candidates()
+
+    system_prompt = """
+    You are the Attacker AI in a simulated customs
+    fraud detection security experiment.
+
+    Generate exactly 5 fictional invoice test cases.
+
+    Each case must demonstrate a different attack:
+
+    1. HS code manipulation
+    2. Product description manipulation
+    3. Undervaluation
+    4. Quantity or invoice total manipulation
+    5. Country of origin inconsistency
+
+    Return valid JSON with this structure:
+
+    {
+        "cases": [
+            {
+                "attack_id": "ATTACK-001",
+                "attack_type": "HS_CODE_MANIPULATION",
+
+                "invoice": {
+                    "invoice_id": "INV-001",
+                    "supplier": "Fictional company",
+                    "product_description": "Product description",
+                    "declared_hs_code": "HS code from candidates",
+                    "quantity": 10,
+                    "unit_price": 100,
+                    "total": 1000,
+                    "currency": "USD",
+                    "origin": "China"
+                },
+
+                "attacker_note": "Explanation of the attempted attack"
+            }
+        ]
+    }
+
+    Rules:
+    - Generate exactly five cases.
+    - Use a different attack type for each case.
+    - All companies and invoices must be fictional.
+    - Use only HS codes from the supplied candidates.
+    - For HS code manipulation, the declared code must
+      not match the actual product.
+    - For undervaluation, make the declared value
+      suspiciously low.
+    - For arithmetic manipulation, make the invoice
+      total inconsistent with quantity times unit price.
+    - For origin inconsistency, include conflicting
+      origin information in the invoice.
+    - Do not make every invoice fraudulent in the same way.
+    - These are simulated test cases, not real invoices.
+    """
+
+    user_prompt = f"""
+    AVAILABLE HS CODE CANDIDATES:
+
+    {json.dumps(candidates, indent=2)}
+
+    Generate the five simulated fraudulent invoices.
+    Return JSON only.
+    """
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.7
+    )
+
+    result = response.choices[0].message.content
+
+    #print("\nRAW GROQ RESPONSE:")
+    #print(result)
+
+    data = json.loads(result)
+
+    #print("\nPARSED JSON KEYS:")
+    #print(data.keys())
+
+    if "cases" not in data:
+        raise ValueError("Missing 'cases' key in AI response")
+
+    print("\nNUMBER OF GENERATED CASES:", len(data["cases"]))
+
+    if len(data["cases"]) != 5:
+        raise ValueError("Attacker AI did not generate exactly five cases")
+
+    return data["cases"]
+
+#Defender agent
+def analyze_invoice_with_defender(invoice):
+
+    system_prompt = """
+    You are the Defender AI in a customs fraud
+    detection system.
+
+    Your job is to independently analyze invoice data
+    and identify suspicious inconsistencies.
+
+    Examine these areas:
+
+    1. Product description versus declared HS code.
+    2. Suspiciously low declared values.
+    3. Quantity, unit price and total inconsistencies.
+    4. Conflicting country of origin information.
+    5. Missing or suspicious invoice information.
+
+    Return valid JSON with exactly these fields:
+
+    {
+        "is_suspicious": true,
+        "hs_code_mismatch": false,
+        "suspicious_value": false,
+        "invoice_arithmetic_mismatch": false,
+        "origin_inconsistency": false,
+        "risk_factors": [],
+        "recommended_action": "REVIEW"
+    }
+
+    Rules:
+
+    - Analyze the invoice independently.
+    - Do not assume an invoice is fraudulent without evidence.
+    - Do not invent missing information.
+    - Do not treat a low price alone as proof of fraud.
+    - Identify mathematical inconsistencies accurately.
+    - If information is insufficient, recommend REVIEW.
+    - Return JSON only.
+    """
+
+    user_prompt = f"""
+    Analyze the following invoice:
+
+    {json.dumps(invoice, indent=2)}
+
+    Identify all suspicious inconsistencies.
+    """
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        response_format={"type": "json_object"},
+        temperature=0
+    )
+
+    result = response.choices[0].message.content
+
+    return json.loads(result)
+
+
+def calculate_risk_score(invoice, defender_result):
+
+    risk_score = 0
+    risk_factors = []
+
+    # 1. HS code mismatch
+    if defender_result["hs_code_mismatch"]:
+        risk_score += 60
+        risk_factors.append("Possible HS code mismatch")
+
+    # 2. Price benchmark verification
+    price_result = check_price_benchmark(invoice)
+
+    if price_result["suspicious_value"]:
+        risk_score += 25
+        risk_factors.append("Declared value below reference benchmark")
+
+    # 3. Invoice arithmetic verification
+    expected_total = invoice["quantity"] * invoice["unit_price"]
+
+    if round(expected_total, 2) != round(invoice["total"], 2):
+        risk_score += 20
+        risk_factors.append("Invoice total does not match quantity x unit price")
+
+    # 4. Origin inconsistency
+    if defender_result["origin_inconsistency"]:
+        risk_score += 20
+        risk_factors.append("Country of origin inconsistency")
+
+    # 5. Final decision
+    if risk_score >= 60:
+        action = "REJECT"
+    elif risk_score >= 20:
+        action = "MANUAL_REVIEW"
+    else:
+        action = "APPROVE"
+
+    return {
+        "risk_score": risk_score,
+        "risk_factors": risk_factors,
+        "price_benchmark": price_result,
+        "final_action": action
+    }
+
+def check_price_benchmark(invoice):
+
+    with open("price_reference.json", "r", encoding="utf-8") as file:
+        price_data = json.load(file)
+
+    hs_code = invoice["declared_hs_code"]
+
+    if hs_code not in price_data:
+        return {
+            "benchmark_available": False,
+            "suspicious_value": False,
+            "reason": "No reference price available"
+        }
+
+    reference = price_data[hs_code]
+
+    reference_price = reference["reference_unit_price"]
+    allowed_deviation = reference["allowed_deviation_percent"]
+
+    minimum_price = reference_price * (1 - allowed_deviation / 100)
+
+    suspicious = invoice["unit_price"] < minimum_price
+
+    return {
+        "benchmark_available": True,
+        "reference_unit_price": reference_price,
+        "minimum_acceptable_price": minimum_price,
+        "declared_unit_price": invoice["unit_price"],
+        "suspicious_value": suspicious,
+        "reason": "Declared price below benchmark" if suspicious else "Price within benchmark range"
+    }
 
 
 def validate_tariff(ai_result):
@@ -201,22 +438,8 @@ def extract_pdf_text(pdf_file):
     return text
 
 
-class ProofRequest(BaseModel):
-    item_cost: int = Field(gt=0)
-    duty_rate_percent: int = Field(ge=0, le=100)
-    declared_duty: int = Field(ge=0)
-api = FastAPI(title="CustomsX AI Tariff Service")
-api.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
+api = FastAPI(title="CustomsX AI Tariff Service")
 class InvoiceRequest(BaseModel):
     invoice_text: str
 
@@ -286,140 +509,34 @@ async def classify_pdf_endpoint(
     finally:
         await file.close()
 
-# Noir circuit lives in the repository's zk/ directory.
-NOIR_PROJECT = Path(__file__).resolve().parent.parent / "zk"
-
-
-@api.post("/generate-proof")
-def generate_proof(request: ProofRequest):
-    project = NOIR_PROJECT
-
-    if not (project / "Nargo.toml").exists():
-        raise HTTPException(
-        status_code=500,
-        detail=(
-            f"Noir project was not found. "
-            f"Project path: {project}; "
-            f"project exists: {project.exists()}; "
-            f"Nargo.toml exists: {(project / 'Nargo.toml').exists()}"
-        )
-    )
-
-    if request.item_cost <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Item cost must be greater than zero."
-        )
-
-    expected_duty = (
-        request.item_cost * request.duty_rate_percent
-    ) // 100
-
-    if expected_duty != request.declared_duty:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Duty mismatch: expected {expected_duty}, "
-                f"received {request.declared_duty}."
-            )
-        )
-
-    prover_file = project / "Prover.toml"
-
-    prover_file.write_text(
-        f'item_cost = "{request.item_cost}"\n'
-        f'duty_rate_percent = "{request.duty_rate_percent}"\n'
-        f'declared_duty = "{request.declared_duty}"\n',
-        encoding="utf-8"
-    )
-
-    try:
-        subprocess.run(
-            ["nargo", "execute", "customsx_zkp"],
-            cwd=project,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=120
-        )
-
-        witness = project / "target" / "customsx_zkp.gz"
-        bytecode = project / "target" / "customsx_zkp.json"
-        output_dir = project / "target" / "api_proof"
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        subprocess.run(
-            [
-                "bb", "prove",
-                "-s", "ultra_honk",
-                "-b", str(bytecode),
-                "-w", str(witness),
-                "-o", str(output_dir),
-                "--oracle_hash", "keccak"
-            ],
-            cwd=project,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=180
-        )
-
-        proof_path = output_dir / "proof"
-        inputs_path = output_dir / "public_inputs"
-
-        proof = "0x" + proof_path.read_bytes().hex()
-        raw_inputs = inputs_path.read_bytes()
-
-        if len(raw_inputs) != 64:
-            raise RuntimeError(
-                f"Expected 64 bytes of public inputs, got {len(raw_inputs)}"
-            )
-
-        public_inputs = [
-            "0x" + raw_inputs[:32].hex(),
-            "0x" + raw_inputs[32:].hex()
-        ]
-
-        return {
-            "proof": proof,
-            "publicInputs": public_inputs,
-            "itemCost": request.item_cost,
-            "dutyRatePercent": request.duty_rate_percent,
-            "declaredDuty": request.declared_duty
-        }
-
-    except subprocess.TimeoutExpired:
-        raise HTTPException(
-            status_code=504,
-            detail="Proof generation timed out."
-        )
-
-    except subprocess.CalledProcessError as error:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Proof generation failed: "
-                + (error.stderr or error.stdout or "Unknown error")
-            )
-        )
-
-    except Exception as error:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Unable to generate proof: {error}"
-        )  
+  
 if __name__ == "__main__":
-    invoice = """
-    Product: Lithium-ion Battery Pack 10kWh
-    Quantity: 1
-    Value: $5000
-    """
 
     try:
-        ai_result = classify_invoice(invoice)
-        final_result = validate_tariff(ai_result)
+        with open("adversarial_cases.json", "r", encoding="utf-8") as file:
+            data = json.load(file)
 
-        print(json.dumps(final_result, indent=4))
+        for case in data["cases"]:
+
+            invoice = case["invoice"]
+
+            print("\n" + "=" * 50)
+            print("ATTACK ID:", case["attack_id"])
+            print("ATTACK TYPE:", case["attack_type"])
+            print("PRODUCT:", invoice["product_description"])
+
+            defender_result = analyze_invoice_with_defender(invoice)
+
+            risk_result = calculate_risk_score(
+                invoice,
+                defender_result
+            )
+
+            print("\nDEFENDER RESULT:")
+            print(json.dumps(defender_result, indent=4))
+
+            print("\nFINAL RISK ASSESSMENT:")
+            print(json.dumps(risk_result, indent=4))
 
     except Exception as error:
         print("Error:", error)

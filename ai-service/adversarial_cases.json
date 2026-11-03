@@ -1,0 +1,85 @@
+{
+    "cases": [
+        {
+            "attack_id": "ATTACK-001",
+            "attack_type": "HS_CODE_MANIPULATION",
+            "invoice": {
+                "invoice_id": "INV-001",
+                "supplier": "Fictional Battery Co.",
+                "product_description": "Lithium-ion Battery Pack 10kWh",
+                "declared_hs_code": "8518.30",
+                "quantity": 10,
+                "unit_price": 100,
+                "total": 1000,
+                "currency": "USD",
+                "origin": "China"
+            },
+            "attacker_note": "Declared HS code does not match the actual product."
+        },
+        {
+            "attack_id": "ATTACK-002",
+            "attack_type": "PRODUCT_DESCRIPTION_MANIPULATION",
+            "invoice": {
+                "invoice_id": "INV-002",
+                "supplier": "Acme Electronics",
+                "product_description": "AC to DC Power Adapter",
+                "declared_hs_code": "8471.30",
+                "quantity": 5,
+                "unit_price": 50,
+                "total": 250,
+                "currency": "USD",
+                "origin": "USA"
+            },
+            "attacker_note": "Product description does not correspond to the declared HS code."
+        },
+        {
+            "attack_id": "ATTACK-003",
+            "attack_type": "UNDERVALUATION",
+            "invoice": {
+                "invoice_id": "INV-003",
+                "supplier": "DeskWorld Inc.",
+                "product_description": "Metal Office Desk",
+                "declared_hs_code": "9403.20",
+                "quantity": 2,
+                "unit_price": 400,
+                "total": 800,
+                "currency": "USD",
+                "origin": "Germany"
+            },
+            "attacker_note": "Declared value is suspiciously low compared to market price."
+        },
+        {
+            "attack_id": "ATTACK-004",
+            "attack_type": "QUANTITY_OR_INVOICE_TOTAL_MANIPULATION",
+            "invoice": {
+                "invoice_id": "INV-004",
+                "supplier": "Fashion Hub",
+                "product_description": "Men's Cotton Trousers",
+                "declared_hs_code": "6203.42",
+                "quantity": 5,
+                "unit_price": 30,
+                "total": 200,
+                "currency": "USD",
+                "origin": "Italy"
+            },
+            "attacker_note": "Invoice total does not equal quantity times unit price."
+        },
+        {
+            "attack_id": "ATTACK-005",
+            "attack_type": "COUNTRY_OF_ORIGIN_INCONSISTENCY",
+            "invoice": {
+                "invoice_id": "INV-005",
+                "supplier": "FanTech Ltd.",
+                "product_description": "Small Electric Table Fan",
+                "declared_hs_code": "8414.51",
+                "quantity": 20,
+                "unit_price": 15,
+                "total": 300,
+                "currency": "USD",
+                "origin": "China",
+                "alternate_origin": "USA"
+            },
+            "attacker_note": "Conflicting origin information in the invoice."
+        }
+    ]
+}
