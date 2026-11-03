@@ -1,0 +1,7 @@
+[package]
+name = "zk_standalone"
+type = "bin"
+authors = ["CustomsX Team"]
+compiler_version = ">=0.30.0"
+
+[dependencies]

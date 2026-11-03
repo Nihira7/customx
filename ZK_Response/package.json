@@ -1,0 +1,14 @@
+{
+  "name": "zk_response",
+  "version": "1.0.0",
+  "description": "Standalone ZK Defense Module for Intercepting Attacker AI Fraud Payloads",
+  "main": "scripts/zk_bridge.py",
+  "scripts": {
+    "test:contract": "npx hardhat run scripts/test_proof.ts",
+    "prove": "nargo prove",
+    "check": "nargo check"
+  },
+  "keywords": ["noir", "zkp", "attacker-defender", "customs-escrow"],
+  "author": "CustomsX Team",
+  "license": "MIT"
+}

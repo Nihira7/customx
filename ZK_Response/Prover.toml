@@ -1,0 +1,8 @@
+declared_hs_code = "392690"
+declared_unit_price = "25"
+declared_quantity = "10"
+price_reference_min = "100"
+price_reference_max = "10000"
+max_allowed_risk_score = "50"
+calculated_risk_score = "85"
+invoice_hash = "12345"
