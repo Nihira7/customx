@@ -14,10 +14,10 @@ declare global {
     ethereum?: any;
   }
 }
-
 const CONTRACT_ADDRESS =
-  "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707";
-  
+  process.env.NEXT_PUBLIC_CUSTOMS_CONTRACT_ADDRESS || "";
+
+
 console.log(
   "CustomsX contract address loaded:",
   process.env.NEXT_PUBLIC_CUSTOMS_CONTRACT_ADDRESS

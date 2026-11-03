@@ -1,0 +1,78 @@
+
+{
+  "jurisdiction": "DEMO",
+  "items": [
+    {
+      "hs_code": "8507.60",
+      "product": "Lithium-ion Battery Pack 10kWh",
+      "duty_rate": 5,
+      "source_version": "demo-v2"
+    },
+    {
+      "hs_code": "8507.10",
+      "product": "Lead-acid Car Starter Battery 12V",
+      "duty_rate": 8,
+      "source_version": "demo-v2"
+    },
+    {
+      "hs_code": "8504.40",
+      "product": "AC to DC Power Adapter",
+      "duty_rate": 10,
+      "source_version": "demo-v2"
+    },
+    {
+      "hs_code": "8518.30",
+      "product": "Wired Stereo Headphones",
+      "duty_rate": 12,
+      "source_version": "demo-v2"
+    },
+    {
+      "hs_code": "8471.30",
+      "product": "Portable Laptop Computer",
+      "duty_rate": 10,
+      "source_version": "demo-v2"
+    },
+    {
+      "hs_code": "8544.42",
+      "product": "Insulated Electrical Cable with Connectors",
+      "duty_rate": 7,
+      "source_version": "demo-v2"
+    },
+    {
+      "hs_code": "3926.90",
+      "product": "Plastic Storage and Utility Articles",
+      "duty_rate": 15,
+      "source_version": "demo-v2"
+    },
+    {
+      "hs_code": "6203.42",
+      "product": "Men's Cotton Trousers",
+      "duty_rate": 18,
+      "source_version": "demo-v2"
+    },
+    {
+      "hs_code": "6109.10",
+      "product": "Cotton T-Shirt",
+      "duty_rate": 15,
+      "source_version": "demo-v2"
+    },
+    {
+      "hs_code": "9403.20",
+      "product": "Metal Office Desk",
+      "duty_rate": 12,
+      "source_version": "demo-v2"
+    },
+    {
+      "hs_code": "8414.51",
+      "product": "Small Electric Table Fan",
+      "duty_rate": 10,
+      "source_version": "demo-v2"
+    },
+    {
+      "hs_code": "8528.72",
+      "product": "Colour Television Receiver",
+      "duty_rate": 15,
+      "source_version": "demo-v2"
+    }
+  ]
+}

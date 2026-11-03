@@ -1,0 +1,6 @@
+[package]
+name = "customsx_zkp"
+type = "bin"
+authors = ["CustomsX"]
+
+[dependencies]

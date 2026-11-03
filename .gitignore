@@ -32,3 +32,24 @@ blockchain/ignition/deployments/
 *.backup
 *.save
 *.bak
+
+# Local Anvil blockchain state
+blockchain/customsx-anvil-state.json
+blockchain/customsx-anvil-state.backup.json
+
+# Local API secrets
+ai-service/.env
+
+# Python generated files
+__pycache__/
+*.pyc
+.venv/
+.venv-wsl/
+
+# Noir generated files
+zk/target/
+zk/out/
+
+# Allow safe environment templates
+!.env.example
+!**/.env.example
