@@ -96,7 +96,12 @@ def classify_invoice(invoice_text):
         temperature=0
     )
 
-    result = response.choices[0].message.content
+    result = response.choices[0].message.content.strip()
+    if result.startswith("```"):
+        result = result.strip("`")
+        if result.startswith("json"):
+            result = result[4:]
+        result = result.strip()
     return json.loads(result)
 
 #Attacker agent
