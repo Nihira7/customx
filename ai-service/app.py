@@ -1,3 +1,11 @@
+import sys
+from pathlib import Path
+
+ZK_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(ZK_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(ZK_PROJECT_ROOT))
+
+from ZK_Response.scripts.zk_bridge import process_zk_response
 
 import os
 import json
@@ -10,6 +18,7 @@ from groq import Groq
 
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from pypdf import PdfReader
 from fastapi import UploadFile, File
@@ -256,31 +265,31 @@ def calculate_risk_score(invoice, defender_result):
     risk_score = 0
     risk_factors = []
 
-    # 1. HS code mismatch
-    if defender_result["hs_code_mismatch"]:
-        risk_score += 60
-        risk_factors.append("Possible HS code mismatch")
-
-    # 2. Price benchmark verification
+    # 1. Deterministic price benchmark verification
     price_result = check_price_benchmark(invoice)
 
     if price_result["suspicious_value"]:
         risk_score += 25
-        risk_factors.append("Declared value below reference benchmark")
+        risk_factors.append("Declared value outside reference benchmark")
 
-    # 3. Invoice arithmetic verification
-    expected_total = invoice["quantity"] * invoice["unit_price"]
+    # 2. Deterministic invoice arithmetic verification
+    expected_total = round(
+        invoice["quantity"] * invoice["unit_price"], 2
+    )
 
-    if round(expected_total, 2) != round(invoice["total"], 2):
+    declared_total = round(invoice["total"], 2)
+
+    if expected_total != declared_total:
         risk_score += 20
-        risk_factors.append("Invoice total does not match quantity x unit price")
+        risk_factors.append(
+            "Invoice total does not match quantity x unit price"
+        )
 
-    # 4. Origin inconsistency
-    if defender_result["origin_inconsistency"]:
-        risk_score += 20
-        risk_factors.append("Country of origin inconsistency")
+    # 3. Keep AI findings visible without using them
+    # as unverified inputs to the deterministic score.
+    ai_warnings = defender_result.get("risk_factors", [])
 
-    # 5. Final decision
+    # 4. Final decision
     if risk_score >= 60:
         action = "REJECT"
     elif risk_score >= 20:
@@ -291,13 +300,17 @@ def calculate_risk_score(invoice, defender_result):
     return {
         "risk_score": risk_score,
         "risk_factors": risk_factors,
+        "ai_warnings": ai_warnings,
         "price_benchmark": price_result,
         "final_action": action
     }
 
+
 def check_price_benchmark(invoice):
 
-    with open("price_reference.json", "r", encoding="utf-8") as file:
+    price_file = Path(__file__).parent / "price_reference.json"
+
+    with open(price_file, "r", encoding="utf-8") as file:
         price_data = json.load(file)
 
     hs_code = invoice["declared_hs_code"]
@@ -315,19 +328,26 @@ def check_price_benchmark(invoice):
     allowed_deviation = reference["allowed_deviation_percent"]
 
     minimum_price = reference_price * (1 - allowed_deviation / 100)
+    maximum_price = reference_price * (1 + allowed_deviation / 100)
 
-    suspicious = invoice["unit_price"] < minimum_price
+    suspicious = (
+        invoice["unit_price"] < minimum_price
+        or invoice["unit_price"] > maximum_price
+    )
 
     return {
         "benchmark_available": True,
         "reference_unit_price": reference_price,
         "minimum_acceptable_price": minimum_price,
+        "maximum_acceptable_price": maximum_price,
         "declared_unit_price": invoice["unit_price"],
         "suspicious_value": suspicious,
-        "reason": "Declared price below benchmark" if suspicious else "Price within benchmark range"
+        "reason": (
+            "Declared price outside benchmark range"
+            if suspicious
+            else "Price within benchmark range"
+        )
     }
-
-
 def validate_tariff(ai_result):
     tariff_file = Path(__file__).parent / "tariffs.json"
 
@@ -440,6 +460,14 @@ def extract_pdf_text(pdf_file):
 
 
 api = FastAPI(title="CustomsX AI Tariff Service")
+
+api.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 class InvoiceRequest(BaseModel):
     invoice_text: str
 
@@ -510,10 +538,56 @@ async def classify_pdf_endpoint(
         await file.close()
 
   
+
+
+class RiskInvoiceRequest(BaseModel):
+    invoice_id: str
+    supplier: str
+    product_description: str
+    declared_hs_code: str
+    quantity: int
+    unit_price: float
+    total: float
+    currency: str = "USD"
+    origin: str
+
+
+@api.post("/analyze-invoice")
+def analyze_invoice_endpoint(request: RiskInvoiceRequest):
+    invoice = request.model_dump()
+
+    try:
+        defender_result = analyze_invoice_with_defender(invoice)
+        risk_result = calculate_risk_score(invoice, defender_result)
+
+        proof_result = process_zk_response(
+            invoice,
+            risk_result,
+            risk_result["price_benchmark"],
+            threshold=19,
+        )
+
+        return {
+            "request_id": str(uuid.uuid4()),
+            "invoice": invoice,
+            "defender_analysis": defender_result,
+            "risk_assessment": risk_result,
+            "zk_proof": proof_result,
+        }
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Invoice analysis failed: {str(error)}",
+        )
+
+
 if __name__ == "__main__":
 
     try:
-        with open("adversarial_cases.json", "r", encoding="utf-8") as file:
+        cases_file = Path(__file__).parent / "adversarial_cases.json"
+
+        with open(cases_file, "r", encoding="utf-8") as file:   
             data = json.load(file)
 
         for case in data["cases"]:

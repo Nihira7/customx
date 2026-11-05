@@ -48,6 +48,67 @@ export default function ExporterPage() {
     "Upload an invoice to begin."
   );
 
+  const [riskInvoice, setRiskInvoice] = useState({
+    invoice_id: "INV-DEMO-001",
+    supplier: "Demo Supplier",
+    product_description: "Metal Office Desk",
+    declared_hs_code: "9403.20",
+    quantity: "2",
+    unit_price: "1000",
+    total: "2000",
+    currency: "USD",
+    origin: "Germany",
+  });
+  const [analysisResult, setAnalysisResult] = useState<any>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+
+  function updateRiskInvoice(field: string, value: string) {
+    setRiskInvoice((previous) => ({
+      ...previous,
+      [field]: value,
+    }));
+  }
+
+  async function analyzeRiskInvoice() {
+    setAnalysisLoading(true);
+    setAnalysisResult(null);
+    setStatus("Running Defender, risk scoring and ZK checks...");
+
+    try {
+      const response = await fetch(`${AI_URL}/analyze-invoice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...riskInvoice,
+          quantity: Number(riskInvoice.quantity),
+          unit_price: Number(riskInvoice.unit_price),
+          total: Number(riskInvoice.total),
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof result.detail === "string"
+            ? result.detail
+            : "Invoice analysis failed."
+        );
+      }
+
+      setAnalysisResult(result);
+      setStatus("Invoice risk analysis completed.");
+    } catch (error) {
+      setStatus(
+        `Analysis failed: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }
+
   const duty =
     Number(cost) * Number(rate) / 100;
 
@@ -333,6 +394,100 @@ export default function ExporterPage() {
             />
           </label>
         </section>
+
+        <section className="rounded-2xl bg-white p-6 shadow-sm space-y-4">
+          <h2 className="text-xl font-semibold">
+            Risk & ZK Verification
+          </h2>
+          <p className="text-sm text-slate-600">
+            Submit invoice details for Defender analysis, risk scoring and
+            real proof eligibility checks.
+          </p>
+
+          {([
+            ["invoice_id", "Invoice ID"],
+            ["supplier", "Supplier"],
+            ["product_description", "Product description"],
+            ["declared_hs_code", "Declared HS code"],
+            ["quantity", "Quantity"],
+            ["unit_price", "Unit price"],
+            ["total", "Invoice total"],
+            ["currency", "Currency"],
+            ["origin", "Country of origin"],
+          ] as const).map(([field, label]) => (
+            <label key={field} className="block text-sm font-medium">
+              {label}
+              <input
+                type={field === "quantity" ? "number" : field === "unit_price" || field === "total" ? "number" : "text"}
+                min={field === "quantity" || field === "unit_price" || field === "total" ? "0" : undefined}
+                step={field === "quantity" ? "1" : field === "unit_price" || field === "total" ? "any" : undefined}
+                value={riskInvoice[field]}
+                onChange={(event) => updateRiskInvoice(field, event.target.value)}
+                className="mt-1 w-full rounded-lg border p-3"
+              />
+            </label>
+          ))}
+
+          <button
+            onClick={analyzeRiskInvoice}
+            disabled={analysisLoading}
+            className="w-full rounded-lg bg-indigo-700 px-4 py-3 font-semibold text-white disabled:opacity-50"
+          >
+            {analysisLoading ? "Analyzing invoice..." : "Run Defender & ZK Analysis"}
+          </button>
+        </section>
+
+        {analysisResult && (
+          <section className="space-y-4 rounded-2xl border border-indigo-200 bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-semibold">Analysis Results</h2>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl bg-slate-100 p-4">
+                <p className="text-sm text-slate-500">Risk score</p>
+                <p className="text-3xl font-bold">
+                  {analysisResult.risk_assessment?.risk_score ?? "N/A"}
+                </p>
+              </div>
+              <div className="rounded-xl bg-slate-100 p-4">
+                <p className="text-sm text-slate-500">Final decision</p>
+                <p className="text-2xl font-bold">
+                  {analysisResult.risk_assessment?.final_action ?? "N/A"}
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="font-semibold">Defender analysis</h3>
+              <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-900 p-4 text-xs text-green-300">
+                {JSON.stringify(analysisResult.defender_analysis, null, 2)}
+              </pre>
+            </div>
+
+            <div>
+              <h3 className="font-semibold">Risk factors</h3>
+              <ul className="mt-2 list-inside list-disc text-sm text-slate-700">
+                {(analysisResult.risk_assessment?.risk_factors || []).length
+                  ? analysisResult.risk_assessment.risk_factors.map((factor: string, index: number) => (
+                      <li key={index}>{factor}</li>
+                    ))
+                  : <li>No risk factors reported.</li>}
+              </ul>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 p-4">
+              <h3 className="font-semibold">Zero-knowledge proof</h3>
+              <p className="mt-2 text-sm">
+                Status: <strong>{analysisResult.zk_proof?.status || "Unknown"}</strong>
+              </p>
+              <p className="text-sm">
+                Proof generated: <strong>{analysisResult.zk_proof?.proof_generated ? "Yes" : "No"}</strong>
+              </p>
+              <p className="mt-2 text-sm text-slate-600">
+                {analysisResult.zk_proof?.message || "No additional proof message."}
+              </p>
+            </div>
+          </section>
+        )}
 
         <section className="rounded-2xl bg-white p-6 shadow-sm space-y-4">
           <h2 className="text-xl font-semibold">

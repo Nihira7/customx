@@ -1,71 +1,157 @@
 import os
-import sys
-import json
 import subprocess
+from pathlib import Path
 
-def process_zk_response(invoice_data, defender_risk_score, threshold=50):
-    """
-    Bridge script to take Defender AI evaluation and generate or reject Noir ZK Proofs.
-    """
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    
-    print(f"[ZK_Response] Intercepting invoice: {invoice_data.get('id', 'N/A')}")
-    print(f"[ZK_Response] Calculated Risk Score: {defender_risk_score} (Threshold: {threshold})")
 
-    # Step 1: Pre-circuit Interception
-    if defender_risk_score > threshold:
-        print("[ZK_Response] DEFENDER BLOCK: Risk score exceeds threshold. Halting ZK Proof Generation!")
+def process_zk_response(invoice_data, risk_result, benchmark_result=None, threshold=19):
+    base_dir = Path(__file__).resolve().parents[1]
+    prover_path = base_dir / "Prover.toml"
+    proof_dir = base_dir / "target" / "proof"
+
+    score = risk_result.get("risk_score") if isinstance(risk_result, dict) else risk_result
+    action = risk_result.get("final_action") if isinstance(risk_result, dict) else None
+
+    result = {
+        "proof_generated": False,
+        "risk_score": score,
+    }
+
+    # Only explicitly approved, low-risk invoices may reach the circuit.
+    if action != "APPROVE" or not isinstance(score, (int, float)) or score > threshold:
         return {
-            "status": "BLOCKED_BY_DEFENDER",
-            "proof_generated": False,
-            "risk_score": defender_risk_score,
-            "message": "High anomaly score detected. ZK proof creation aborted."
+            **result,
+            "status": "BLOCKED_BY_RISK_CHECK",
+            "message": "A proof is generated only for APPROVE decisions with risk score at most 19.",
         }
 
-    # Step 2: Populate Prover.toml inputs
-    hs_code_clean = str(invoice_data.get("hs_code", "392690")).replace(".", "")
-    unit_price = int(float(invoice_data.get("unit_price", 0)))
-    quantity = int(invoice_data.get("quantity", 1))
+    if not isinstance(benchmark_result, dict) or not benchmark_result.get("benchmark_available", True):
+        return {
+            **result,
+            "status": "NO_BENCHMARK",
+            "message": "No usable reference-price benchmark is available.",
+        }
 
-    prover_toml_path = os.path.join(base_dir, "Prover.toml")
-    with open(prover_toml_path, "w", encoding="utf-8") as f:
-        f.write(f'declared_hs_code = "{hs_code_clean}"\n')
-        f.write(f'declared_unit_price = "{unit_price}"\n')
-        f.write(f'declared_quantity = "{quantity}"\n')
-        f.write(f'price_reference_min = "100"\n')
-        f.write(f'price_reference_max = "10000"\n')
-        f.write(f'max_allowed_risk_score = "{threshold}"\n')
-        f.write(f'calculated_risk_score = "{defender_risk_score}"\n')
-        f.write(f'invoice_hash = "12345"\n')
-
-    # Step 3: Run Nargo Prove/Execute
     try:
-        res = subprocess.run(["nargo", "execute", "witness"], capture_output=True, text=True, cwd=base_dir)
-        if res.returncode != 0:
-            print("[ZK_Response] ZK REJECTED: Noir Circuit constraint validation failed.")
+        unit_price = float(invoice_data["unit_price"])
+        quantity = int(invoice_data["quantity"])
+        total = float(
+            invoice_data.get(
+                "total",
+                invoice_data.get("declared_total", invoice_data.get("total_amount"))
+            )
+        )
+        minimum = float(benchmark_result["minimum_acceptable_price"])
+        maximum = float(benchmark_result["maximum_acceptable_price"])
+
+        # This circuit currently uses whole-number currency units.
+        values = [unit_price, total, minimum, maximum]
+        if any(not value.is_integer() for value in values):
+            raise ValueError("The current Noir circuit requires whole-number currency values.")
+
+        unit_price, total, minimum, maximum = map(int, values)
+
+        if quantity <= 0:
+            raise ValueError("Invoice quantity must be greater than zero.")
+
+        if minimum > maximum:
+            raise ValueError("Benchmark minimum cannot exceed benchmark maximum.")
+
+        if not (minimum <= unit_price <= maximum):
             return {
-                "status": "CIRCUIT_CONSTRAINT_FAILED",
-                "proof_generated": False,
-                "error": res.stderr
+                **result,
+                "status": "OUTSIDE_PRICE_BENCHMARK",
+                "message": "Declared unit price is outside the benchmark range.",
             }
 
-        print("[ZK_Response] SUCCESS: ZK Proof generated successfully.")
-        return {
-            "status": "PROOF_GENERATED",
-            "proof_generated": True,
-            "proof": "0x1234567890abcdef"
-        }
-    except Exception as e:
-        return {"status": "ERROR", "error": str(e)}
+        if unit_price * quantity != total:
+            return {
+                **result,
+                "status": "ARITHMETIC_MISMATCH",
+                "message": "Declared total does not equal unit price multiplied by quantity.",
+            }
 
-if __name__ == "__main__":
-    sample_invoice = {
-        "id": "ATTACK-001",
-        "description": "luxury rolex watch",
-        "hs_code": "3926.90",
-        "unit_price": 25.0,
-        "quantity": 10
-    }
-    # Simulate high risk attack
-    res = process_zk_response(sample_invoice, defender_risk_score=85)
-    print("Result:", res)
+        # Preserve the user's existing Prover.toml after this run.
+        previous_toml = prover_path.read_text(encoding="utf-8") if prover_path.exists() else None
+
+        prover_contents = (
+            f'declared_unit_price = "{unit_price}"\n'
+            f'declared_quantity = "{quantity}"\n'
+            f'declared_total = "{total}"\n'
+            f'price_reference_min = "{minimum}"\n'
+            f'price_reference_max = "{maximum}"\n'
+            f'max_allowed_risk_score = "{threshold}"\n'
+            f'calculated_risk_score = "{int(score)}"\n'
+        )
+
+        try:
+            prover_path.write_text(prover_contents, encoding="utf-8")
+
+            def run_command(command):
+                completed = subprocess.run(
+                    command,
+                    cwd=base_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+                if completed.returncode != 0:
+                    raise RuntimeError(
+                        f"Command failed: {' '.join(command)}\n"
+                        f"{completed.stdout}\n{completed.stderr}"
+                    )
+                return completed
+
+            run_command(["nargo", "execute", "witness"])
+
+            proof_dir.mkdir(parents=True, exist_ok=True)
+
+            run_command([
+                "bb", "prove",
+                "-s", "ultra_honk",
+                "-b", "target/zk_standalone.json",
+                "-w", "target/witness.gz",
+                "-o", "target/proof",
+                "--oracle_hash", "keccak",
+                "--write_vk",
+                "--verify",
+            ])
+
+            proof_path = proof_dir / "proof"
+            public_inputs_path = proof_dir / "public_inputs"
+
+            if not proof_path.is_file() or not public_inputs_path.is_file():
+                raise RuntimeError("Barretenberg did not produce the expected proof files.")
+
+            proof_hex = "0x" + proof_path.read_bytes().hex()
+            public_inputs_bytes = public_inputs_path.read_bytes()
+
+            if len(public_inputs_bytes) % 32 != 0:
+                raise RuntimeError("Public inputs file has an invalid length.")
+
+            public_inputs = [
+                "0x" + public_inputs_bytes[i:i + 32].hex()
+                for i in range(0, len(public_inputs_bytes), 32)
+            ]
+
+            return {
+                "status": "PROOF_GENERATED",
+                "proof_generated": True,
+                "risk_score": score,
+                "proof": proof_hex,
+                "public_inputs": public_inputs,
+                "proof_file": str(proof_path),
+                "public_inputs_file": str(public_inputs_path),
+            }
+
+        finally:
+            if previous_toml is not None:
+                prover_path.write_text(previous_toml, encoding="utf-8")
+            elif prover_path.exists():
+                prover_path.unlink()
+
+    except Exception as exc:
+        return {
+            **result,
+            "status": "PROOF_GENERATION_FAILED",
+            "error": str(exc),
+        }
