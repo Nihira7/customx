@@ -16,9 +16,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from groq import Groq
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import subprocess
 
 from pypdf import PdfReader
 from fastapi import UploadFile, File
@@ -29,10 +30,7 @@ load_dotenv()
 api_key = os.getenv("GROQ_API_KEY")
 model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 
-if not api_key:
-    raise ValueError("GROQ_API_KEY is missing from the .env file")
-
-client = Groq(api_key=api_key)
+client = Groq(api_key=api_key) if api_key else None
 
 def get_tariff_candidates():
     tariff_file = Path(__file__).parent / "tariffs.json"
@@ -51,6 +49,11 @@ def get_tariff_candidates():
     ]
 
 def classify_invoice(invoice_text):
+    if not client:
+        raise HTTPException(
+            status_code=500,
+            detail="GROQ_API_KEY is missing. Please set your GROQ_API_KEY in ai-service/.env"
+        )
     candidates = get_tariff_candidates()
 
     system_prompt = """
@@ -198,6 +201,11 @@ def generate_adversarial_invoices():
 
 #Defender agent
 def analyze_invoice_with_defender(invoice):
+    if not client:
+        raise HTTPException(
+            status_code=500,
+            detail="GROQ_API_KEY is missing. Please set your GROQ_API_KEY in ai-service/.env"
+        )
 
     system_prompt = """
     You are the Defender AI in a customs fraud
@@ -537,7 +545,135 @@ async def classify_pdf_endpoint(
     finally:
         await file.close()
 
-  
+
+# Noir circuit lives in the repository's zk/ directory.
+NOIR_PROJECT = Path(__file__).resolve().parent.parent / "zk"
+
+
+class ProofRequest(BaseModel):
+    item_cost: int = Field(gt=0)
+    duty_rate_percent: int = Field(ge=0, le=100)
+    declared_duty: int = Field(ge=0)
+
+
+@api.post("/generate-proof")
+def generate_proof(request: ProofRequest):
+    project = NOIR_PROJECT
+
+    if not (project / "Nargo.toml").exists():
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Noir project was not found. "
+                f"Project path: {project}; "
+                f"project exists: {project.exists()}; "
+                f"Nargo.toml exists: {(project / 'Nargo.toml').exists()}"
+            )
+        )
+
+    if request.item_cost <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Item cost must be greater than zero."
+        )
+
+    expected_duty = (
+        request.item_cost * request.duty_rate_percent
+    ) // 100
+
+    if expected_duty != request.declared_duty:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Duty mismatch: expected {expected_duty}, "
+                f"received {request.declared_duty}."
+            )
+        )
+
+    prover_file = project / "Prover.toml"
+
+    prover_file.write_text(
+        f'item_cost = "{request.item_cost}"\n'
+        f'duty_rate_percent = "{request.duty_rate_percent}"\n'
+        f'declared_duty = "{request.declared_duty}"\n',
+        encoding="utf-8"
+    )
+
+    try:
+        subprocess.run(
+            ["nargo", "execute", "customsx_zkp"],
+            cwd=project,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+
+        witness = project / "target" / "customsx_zkp.gz"
+        bytecode = project / "target" / "customsx_zkp.json"
+        output_dir = project / "target" / "api_proof"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        subprocess.run(
+            [
+                "bb", "prove",
+                "-s", "ultra_honk",
+                "-b", str(bytecode),
+                "-w", str(witness),
+                "-o", str(output_dir),
+                "--oracle_hash", "keccak"
+            ],
+            cwd=project,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=180
+        )
+
+        proof_path = output_dir / "proof"
+        inputs_path = output_dir / "public_inputs"
+
+        proof = "0x" + proof_path.read_bytes().hex()
+        raw_inputs = inputs_path.read_bytes()
+
+        if len(raw_inputs) != 64:
+            raise RuntimeError(
+                f"Expected 64 bytes of public inputs, got {len(raw_inputs)}"
+            )
+
+        public_inputs = [
+            "0x" + raw_inputs[:32].hex(),
+            "0x" + raw_inputs[32:].hex()
+        ]
+
+        return {
+            "proof": proof,
+            "publicInputs": public_inputs,
+            "itemCost": request.item_cost,
+            "dutyRatePercent": request.duty_rate_percent,
+            "declaredDuty": request.declared_duty
+        }
+
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=504,
+            detail="Proof generation timed out."
+        )
+
+    except subprocess.CalledProcessError as error:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Proof generation failed: "
+                + (error.stderr or error.stdout or "Unknown error")
+            )
+        )
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to generate proof: {error}"
+        )
 
 
 class RiskInvoiceRequest(BaseModel):

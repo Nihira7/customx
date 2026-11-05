@@ -43,6 +43,7 @@ ai-service/.env
 # Python generated files
 __pycache__/
 *.pyc
+venv/
 .venv/
 .venv-wsl/
 
