@@ -28,7 +28,7 @@ from fastapi import UploadFile, File
 load_dotenv()
 
 api_key = os.getenv("GROQ_API_KEY")
-model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
 client = Groq(api_key=api_key) if api_key else None
 
@@ -471,7 +471,7 @@ api = FastAPI(title="CustomsX AI Tariff Service")
 
 api.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origin_regex=r"^https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -530,16 +530,21 @@ async def classify_pdf_endpoint(
 
         return final_result
 
+    except HTTPException:
+        raise
+
     except ValueError as error:
         raise HTTPException(
             status_code=400,
             detail=str(error)
         )
 
-    except Exception:
+    except Exception as error:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
-            detail="Unable to process PDF invoice"
+            detail=f"Unable to process PDF invoice: {str(error)}"
         )
 
     finally:
